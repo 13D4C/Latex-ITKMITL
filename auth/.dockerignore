@@ -1,0 +1,8 @@
+web/node_modules
+web/dist
+internal/web/dist
+overleaf-ldap-auth
+*.log
+.git
+.idea
+.vscode

@@ -1,0 +1,124 @@
+services:
+  # The Go LDAP-auth service. Acts as the front door — handles /login itself,
+  # provisions users into Overleaf, and reverse-proxies everything else to
+  # sharelatex (WebSockets included).
+  #
+  # Production-grade: terminate TLS in front of this with caddy / traefik /
+  # nginx, or enable cert-manager in a cluster. The /api/login endpoint sets
+  # Secure cookies whenever it sees X-Forwarded-Proto=https.
+  go-auth:
+    build:
+      context: ./auth
+    image: itkmitl/overleaf-ldap-auth:local
+    container_name: go-auth
+    restart: always
+    depends_on:
+      sharelatex:
+        condition: service_started
+    env_file:
+      - .env
+    # When you flip to file-based secrets (recommended for prod), uncomment
+    # the block below AND remove the matching plain-text lines from .env.
+    # The Go config layer auto-detects *_FILE variants.
+    # environment:
+    #   LDAP_PASSWORD_FILE: /run/secrets/ldap_password
+    #   SESSION_SECRET_FILE: /run/secrets/session_secret
+    #   OVERLEAF_ADMIN_PASSWORD_FILE: /run/secrets/overleaf_admin_password
+    # secrets:
+    #   - ldap_password
+    #   - session_secret
+    #   - overleaf_admin_password
+    ports:
+      - "80:8080"
+    networks:
+      - overleaf-net
+      
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=16M
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "/app/overleaf-ldap-auth", "-healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  sharelatex:
+    restart: always
+    # Pinned to 5.5.0 — the last tag that accepts MongoDB 7. From 5.5.1 the
+    # image hard-aborts on anything below MongoDB 8.0, but MongoDB 8.0 itself
+    # refuses to boot on kernel 6.19+ (SERVER-121912). Until the kernel issue
+    # is resolved upstream, do NOT bump this tag.
+    image: sharelatex/sharelatex:5.5.0
+    container_name: sharelatex
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    # No host port: only go-auth reaches Overleaf, over the internal network.
+    expose:
+      - "80"
+    stop_grace_period: 60s
+    volumes:
+      - ~/sharelatex_data:/var/lib/overleaf
+    networks:
+      - overleaf-net
+    environment:
+      OVERLEAF_APP_NAME: Overleaf Community Edition
+      OVERLEAF_MONGO_URL: mongodb://mongo/sharelatex
+      OVERLEAF_REDIS_HOST: redis
+      REDIS_HOST: redis
+      ENABLED_LINKED_FILE_TYPES: "project_file,project_output_file"
+      ENABLE_CONVERSIONS: "true"
+      EMAIL_CONFIRMATION_DISABLED: "true"
+
+  mongo:
+    restart: always
+    # 8.0 refuses to boot on kernel 6.19+ (SERVER-121912). 7.0 is fully
+    # supported by Overleaf and not affected by the check.
+    image: mongo:7.0
+    container_name: mongo
+    command: "--replSet overleaf"
+    volumes:
+      - ~/mongo_data:/data/db
+      - ./bin/shared/mongodb-init-replica-set.js:/docker-entrypoint-initdb.d/mongodb-init-replica-set.js
+    environment:
+      MONGO_INITDB_DATABASE: sharelatex
+    extra_hosts:
+      - mongo:127.0.0.1
+    networks:
+      - overleaf-net
+    healthcheck:
+      test: echo 'db.stats().ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
+  redis:
+    restart: always
+    image: redis:6.2
+    container_name: redis
+    volumes:
+      - ~/redis_data:/data
+    networks:
+      - overleaf-net
+
+networks:
+  overleaf-net:
+    driver: bridge
+
+# Uncomment to switch from .env to file-based secrets. Each file must contain
+# exactly one value with no trailing newline. chmod 600 the files; the dir
+# should be owned by the user running docker compose.
+# secrets:
+#   ldap_password:
+#     file: ./secrets/ldap_password
+#   session_secret:
+#     file: ./secrets/session_secret
+#   overleaf_admin_password:
+#     file: ./secrets/overleaf_admin_password

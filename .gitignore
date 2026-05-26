@@ -1,0 +1,21 @@
+.env
+secrets/*
+!secrets/README
+~/sharelatex_data
+~/mongo_data
+~/redis_data
+
+# Go build artefacts
+auth/overleaf-ldap-auth
+
+# Frontend build artefacts
+auth/web/node_modules
+auth/web/dist
+
+# Svelte writes its output to internal/web/dist; keep placeholders so
+# `go:embed dist` succeeds before the first frontend build.
+auth/internal/web/dist/*
+!auth/internal/web/dist/index.html
+!auth/internal/web/dist/assets/
+auth/internal/web/dist/assets/*
+!auth/internal/web/dist/assets/.gitkeep

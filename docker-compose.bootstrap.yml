@@ -1,0 +1,8 @@
+# Temporary override used ONLY for the first-time /launchpad admin bootstrap.
+# Exposes sharelatex directly on the host so you can hit /launchpad before
+# go-auth is in front. DELETE this file (or just don't pass `-f`) once the
+# admin user exists and you've saved its credentials to .env.
+services:
+  sharelatex:
+    ports:
+      - "127.0.0.1:8081:80"
